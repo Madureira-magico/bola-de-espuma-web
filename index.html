@@ -198,8 +198,12 @@ button{font-family:inherit}
         </div>
 
         <div class="fld">
+          <span>Pausa antes da bola poder voltar: <b id="pause-out"></b></span>
+          <input id="f-pause" type="range" min="3" max="10" step="1" value="5">
+        </div>
+
+        <div class="fld">
           <span id="offline-state">Uso sem internet: verificando…</span>
-          <span id="diag"></span>
         </div>
 
         <div class="btns">
@@ -330,6 +334,14 @@ button{font-family:inherit}
   });
   shakeEl.addEventListener('input',function(){
     shakeSens=+this.value;shakeOut.textContent=shakeSens;store(SHAKEKEY,String(shakeSens));
+  });
+  var PAUSEKEY='tela-de-palco-pausa',pauseSec=5,cooldownUntil=0;
+  var pauseEl=$('f-pause'),pauseOut=$('pause-out');
+  var savedPause=parseInt(load(PAUSEKEY),10);
+  if(savedPause>=3&&savedPause<=10){pauseSec=savedPause;}
+  pauseEl.value=pauseSec;pauseOut.textContent=pauseSec+' s';
+  pauseEl.addEventListener('input',function(){
+    pauseSec=+this.value;pauseOut.textContent=pauseSec+' s';store(PAUSEKEY,String(pauseSec));
   });
   var safeEl=$('safe');
   function topLimit(){return Math.max(0,(safeEl.getBoundingClientRect().height||0)+topExtra);}
@@ -595,7 +607,7 @@ button{font-family:inherit}
     var top=topLimit()+R;
     if(ball.y<top){ball.y=top;ball.vy=Math.abs(ball.vy)*e;}
     if(!ball.open&&ball.y>H-R){ball.y=H-R;ball.vy=-Math.abs(ball.vy)*e;}
-    if(ball.open&&ball.y>H+R+10){ballStop();}
+    if(ball.open&&ball.y>H+R+10){ballStop();cooldownUntil=Date.now()+pauseSec*1000;}
   }
 
   function draw(now){
@@ -655,6 +667,7 @@ button{font-family:inherit}
     if(Object.keys(ptrs).length>1||swiped||Date.now()<blockTap||Date.now()<grabClick){return;}
     if(c.d>70||Date.now()-c.t>900){return;}
     tapDone=Date.now()+700;
+    if(Date.now()<cooldownUntil){return;}
     ballTap(c.x,c.y);
   });
   document.addEventListener('touchend',function(){enableSensors();},{passive:true});
@@ -667,6 +680,7 @@ button{font-family:inherit}
     if(t.closest&&t.closest('#hot,#sheet,#start')){return;}
     if(Date.now()<grabClick||Date.now()<tapDone){return;}
     if(dragMoved){dragMoved=false;return;}
+    if(Date.now()<cooldownUntil){return;}
     ballTap(e.clientX,e.clientY);
   });
 
@@ -690,7 +704,6 @@ button{font-family:inherit}
   }
   function openSheet(){
     checkOffline();
-    $('diag').textContent='Diagnóstico: janela '+window.innerWidth+'×'+window.innerHeight+', aparelho '+screen.width+'×'+screen.height+', app '+Math.round(device.getBoundingClientRect().width)+'×'+Math.round(device.getBoundingClientRect().height);
     ballStop();
     sheet.hidden=false;
     requestAnimationFrame(function(){sheet.classList.add('open');});
@@ -735,7 +748,7 @@ button{font-family:inherit}
     })).then(function(res){
       return caches.keys().then(function(keys){
         keys=keys.filter(function(k){return k.indexOf('bola-de-espuma-')===0;});
-        if(!keys.length){keys=['bola-de-espuma-v9'];}
+        if(!keys.length){keys=['bola-de-espuma-v10'];}
         return Promise.all(keys.map(function(k){
           return caches.open(k).then(function(c){
             return Promise.all([
