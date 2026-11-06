@@ -140,6 +140,10 @@ button{font-family:inherit}
 .area-msg{position:absolute;left:16px;right:16px;top:calc(env(safe-area-inset-top,0px) + 24px);color:#fff;font:600 16px/1.4 system-ui,sans-serif;text-align:center;text-shadow:0 1px 4px #000}
 .area-box{position:absolute;border:2px dashed #ffd54a;background:rgba(255,213,74,.25);border-radius:8px;pointer-events:none}
 .area-bar{position:absolute;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 24px);display:flex;gap:10px}
+.area-bar.up{bottom:auto;top:calc(env(safe-area-inset-top,0px) + 92px)}
+.area-bar .btn{padding:10px 12px;font-size:15px;opacity:.95}
+#vover{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none;z-index:2}
+.vid.with-over video{object-fit:cover}
 #video-state{min-height:1.2em;color:#c9d1e6}
 </style>
 </head>
@@ -159,11 +163,11 @@ button{font-family:inherit}
     <canvas class="ball" id="ball" hidden aria-hidden="true"></canvas>
     <div class="sensor-note" id="sensor-note" hidden>Sem sensor de movimento nesta tela. Arraste o dedo para inclinar a bola e balance para cima e para baixo para ela cair.</div>
 
-    <div class="vid" id="vid" hidden><video id="vplayer" playsinline webkit-playsinline preload="auto"></video></div>
+    <div class="vid" id="vid" hidden><video id="vplayer" playsinline webkit-playsinline preload="auto"></video><img id="vover" alt="" hidden></div>
     <div class="area" id="area" hidden>
       <div class="area-msg" id="area-msg">Arraste com o dedo para marcar a área que abre o vídeo.</div>
       <div class="area-box" id="area-box" hidden></div>
-      <div class="area-bar">
+      <div class="area-bar" id="area-bar">
         <button class="btn" id="area-cancel" type="button">Cancelar</button>
         <button class="btn main" id="area-save" type="button">Salvar área</button>
       </div>
@@ -219,6 +223,8 @@ button{font-family:inherit}
           <input id="f-video" type="file" accept="video/*">
           <span>Vídeo 2: abre quando você toca durante o vídeo 1 (opcional)</span>
           <input id="f-video2" type="file" accept="video/*">
+          <span>Imagem por cima dos vídeos (PNG com a parte do meio transparente, opcional)</span>
+          <input id="f-overlay" type="file" accept="image/png,image/*">
           <span id="video-state"></span>
           <div class="btns">
             <button class="btn" id="b-area" type="button">Definir área do toque (abre o vídeo 1)</button>
@@ -226,6 +232,7 @@ button{font-family:inherit}
             <button class="btn" id="b-video-test" type="button">Testar vídeo</button>
             <button class="btn" id="b-video-clear" type="button">Remover vídeo 1</button>
             <button class="btn" id="b-video2-clear" type="button">Remover vídeo 2</button>
+            <button class="btn" id="b-over-clear" type="button">Remover imagem</button>
             <button class="btn" id="b-area2-clear" type="button">Limpar área do vídeo 2</button>
           </div>
         </div>
@@ -682,7 +689,7 @@ button{font-family:inherit}
   }
 
   /* Vídeo ao tocar numa área: o vídeo fica guardado no aparelho (funciona sem internet) */
-  var vid=$('vid'),vplayer=$('vplayer'),videoBlob=null,videoBlob2=null,vidWhich=1,openedAt=0,vidUrl='',endTimer=0,areaMode=false;
+  var vid=$('vid'),vplayer=$('vplayer'),vover=$('vover'),overBlob=null,overUrl='',videoBlob=null,videoBlob2=null,vidWhich=1,openedAt=0,vidUrl='',endTimer=0,areaMode=false;
   var AREAKEY='tela-de-palco-area',AREA2KEY='tela-de-palco-area2',area=null,area2=null,tmpArea=null,areaTarget=1;
   try{area=JSON.parse(load(AREAKEY)||'null');}catch(e){area=null;}
   if(!area||typeof area.x!=='number'){area=null;}
@@ -708,17 +715,27 @@ button{font-family:inherit}
   function videoStatus(){
     var t=videoBlob?('Vídeo 1 guardado ('+(videoBlob.size/1048576).toFixed(1)+' MB). '):'Vídeo 1: nenhum. ';
     t+=videoBlob2?('Vídeo 2 guardado ('+(videoBlob2.size/1048576).toFixed(1)+' MB). '):'Vídeo 2: nenhum. ';
+    t+=overBlob?'Imagem por cima: sim. ':'Imagem por cima: não. ';
     t+=area?'Área 1 definida. ':'Área 1 ainda não definida. ';
     t+=area2?'Área do vídeo 2 definida.':'Área do vídeo 2: qualquer lugar.';
     $('video-state').textContent=t;
   }
-  try{idbGet('video').then(function(b){videoBlob=b||null;return idbGet('video2');}).then(function(b){videoBlob2=b||null;videoStatus();}).catch(function(){videoStatus();});}catch(e){videoStatus();}
+  try{idbGet('video').then(function(b){videoBlob=b||null;return idbGet('video2');}).then(function(b){videoBlob2=b||null;return idbGet('overlay');}).then(function(b){overBlob=b||null;videoStatus();}).catch(function(){videoStatus();});}catch(e){videoStatus();}
   function inRect(a,x,y){
     if(!a){return false;}
     var r=device.getBoundingClientRect(),fx=(x-r.left)/r.width,fy=(y-r.top)/r.height;
     return fx>=a.x&&fx<=a.x+a.w&&fy>=a.y&&fy<=a.y+a.h;
   }
   function inArea(x,y){return inRect(area,x,y);}
+  function showOver(){
+    if(overUrl){URL.revokeObjectURL(overUrl);overUrl='';}
+    if(overBlob){overUrl=URL.createObjectURL(overBlob);vover.src=overUrl;vover.hidden=false;vid.classList.add('with-over');}
+    else{vover.hidden=true;vid.classList.remove('with-over');}
+  }
+  function hideOver(){
+    vover.hidden=true;vover.removeAttribute('src');vid.classList.remove('with-over');
+    if(overUrl){URL.revokeObjectURL(overUrl);overUrl='';}
+  }
   function openVideo(){
     if(!videoBlob||!vid.hidden){return false;}
     ballStop();
@@ -727,6 +744,7 @@ button{font-family:inherit}
     vplayer.controls=false;
     vplayer.src=vidUrl;
     vidWhich=1;openedAt=Date.now();
+    showOver();
     vid.hidden=false;
     var p=vplayer.play();
     if(p&&p.catch){p.catch(function(){vplayer.controls=true;});}
@@ -739,6 +757,7 @@ button{font-family:inherit}
     try{vplayer.load();}catch(e){}
     if(vidUrl){URL.revokeObjectURL(vidUrl);vidUrl='';}
     vid.hidden=true;
+    hideOver();
   }
   /* Tocar durante o vídeo 1 pula na hora para o vídeo 2 */
   vid.addEventListener('click',function(e){
@@ -774,6 +793,17 @@ button{font-family:inherit}
     }).then(function(){inp.value='';});
   });
   $('b-area2-clear').addEventListener('click',function(){area2=null;drop(AREA2KEY);videoStatus();});
+  $('f-overlay').addEventListener('change',function(){
+    var f=this.files&&this.files[0],inp=this;
+    if(!f){return;}
+    $('video-state').textContent='Guardando a imagem…';
+    idbSet('overlay',f).then(function(){overBlob=f;videoStatus();}).catch(function(){
+      $('video-state').textContent='Não consegui guardar a imagem.';
+    }).then(function(){inp.value='';});
+  });
+  $('b-over-clear').addEventListener('click',function(){
+    idbDel('overlay').then(function(){overBlob=null;videoStatus();}).catch(function(){});
+  });
   $('b-video2-clear').addEventListener('click',function(){
     idbDel('video2').then(function(){videoBlob2=null;videoStatus();}).catch(function(){});
   });
@@ -794,6 +824,7 @@ button{font-family:inherit}
     if(!tmpArea){areaBox.hidden=true;return;}
     var r=device.getBoundingClientRect();
     areaBox.hidden=false;
+    $('area-bar').classList.toggle('up',(tmpArea.y+tmpArea.h/2)>0.55);
     areaBox.style.left=tmpArea.x*r.width+'px';areaBox.style.top=tmpArea.y*r.height+'px';
     areaBox.style.width=tmpArea.w*r.width+'px';areaBox.style.height=tmpArea.h*r.height+'px';
   }
@@ -814,7 +845,7 @@ button{font-family:inherit}
     vidUrl=URL.createObjectURL(videoBlob);
     vplayer.controls=false;vplayer.muted=true;
     vplayer.onloadedmetadata=function(){try{vplayer.currentTime=0.1;}catch(e){}};
-    vplayer.src=vidUrl;vidWhich=0;vid.hidden=false;
+    vplayer.src=vidUrl;vidWhich=0;showOver();vid.hidden=false;
     setTimeout(function(){areaEl.hidden=false;drawBox();},320);
   });
   areaEl.addEventListener('pointerdown',function(e){
@@ -950,7 +981,7 @@ button{font-family:inherit}
     })).then(function(res){
       return caches.keys().then(function(keys){
         keys=keys.filter(function(k){return k.indexOf('bola-de-espuma-')===0;});
-        if(!keys.length){keys=['bola-de-espuma-v13'];}
+        if(!keys.length){keys=['bola-de-espuma-v14'];}
         return Promise.all(keys.map(function(k){
           return caches.open(k).then(function(c){
             return Promise.all([
