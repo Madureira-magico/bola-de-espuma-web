@@ -404,10 +404,10 @@ button{font-family:inherit}
     function listenMot(){window.addEventListener('devicemotion',onMotion);}
     try{
       if(DOE&&typeof DOE.requestPermission==='function'){
-        DOE.requestPermission().then(function(r){if(r==='granted'){listenOri();}}).catch(function(){});
+        DOE.requestPermission().then(function(r){if(r==='granted'){listenOri();}}).catch(function(){sensorAsked=false;});
       }else if(DOE){listenOri();}
       if(DME&&typeof DME.requestPermission==='function'){
-        DME.requestPermission().then(function(r){if(r==='granted'){listenMot();}}).catch(function(){});
+        DME.requestPermission().then(function(r){if(r==='granted'){listenMot();}}).catch(function(){sensorAsked=false;});
       }else if(DME){listenMot();}
     }catch(err){}
   }
@@ -636,13 +636,36 @@ button{font-family:inherit}
     if(ball.on){raf=requestAnimationFrame(loop);}
   }
 
+  /* Toque tolerante: vale mesmo se o dedo (ou a base do polegar) rolar um pouco */
+  var tapC=null,tapDone=0;
+  device.addEventListener('pointerdown',function(e){
+    if(grab||!sheet.hidden){tapC=null;return;}
+    if(e.target.closest&&e.target.closest('#hot,#sheet,#start')){tapC=null;return;}
+    if(tapC){tapC=null;return;}
+    tapC={id:e.pointerId,x:e.clientX,y:e.clientY,t:Date.now(),d:0};
+  });
+  device.addEventListener('pointermove',function(e){
+    if(tapC&&e.pointerId===tapC.id){tapC.d=Math.max(tapC.d,Math.hypot(e.clientX-tapC.x,e.clientY-tapC.y));}
+  });
+  device.addEventListener('pointercancel',function(){tapC=null;});
+  device.addEventListener('pointerup',function(e){
+    var c=tapC;
+    if(!c||e.pointerId!==c.id){return;}
+    tapC=null;
+    if(Object.keys(ptrs).length>1||swiped||Date.now()<blockTap||Date.now()<grabClick){return;}
+    if(c.d>70||Date.now()-c.t>900){return;}
+    tapDone=Date.now()+700;
+    ballTap(c.x,c.y);
+  });
+  document.addEventListener('touchend',function(){enableSensors();},{passive:true});
+
   /* Toque na tela: a bola aparece sob o dedo */
   document.addEventListener('click',function(e){
     var t=e.target;
     enableSensors();
     if(!sheet.hidden||Date.now()<blockTap||!device.contains(t)){return;}
     if(t.closest&&t.closest('#hot,#sheet,#start')){return;}
-    if(Date.now()<grabClick){return;}
+    if(Date.now()<grabClick||Date.now()<tapDone){return;}
     if(dragMoved){dragMoved=false;return;}
     ballTap(e.clientX,e.clientY);
   });
@@ -712,7 +735,7 @@ button{font-family:inherit}
     })).then(function(res){
       return caches.keys().then(function(keys){
         keys=keys.filter(function(k){return k.indexOf('bola-de-espuma-')===0;});
-        if(!keys.length){keys=['bola-de-espuma-v8'];}
+        if(!keys.length){keys=['bola-de-espuma-v9'];}
         return Promise.all(keys.map(function(k){
           return caches.open(k).then(function(c){
             return Promise.all([

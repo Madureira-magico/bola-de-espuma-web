@@ -1,7 +1,7 @@
 /* Depois de instalado, o app abre sempre da cópia guardada no aparelho
    e não busca nada na internet. Para receber uma versão nova, troque o número
    em CACHE (ex.: v6) ao publicar os arquivos novos. */
-var CACHE = 'bola-de-espuma-v8';
+var CACHE = 'bola-de-espuma-v9';
 var ARQUIVOS = ['./', './index.html', './apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
