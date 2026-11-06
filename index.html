@@ -449,9 +449,46 @@ button{font-family:inherit}
     }else if(now-shake.t>700){shake.count=0;shake.sign=0;}
   }
 
+  /* Pegar a bola com o dedo e arrastar; ao soltar, ela segue com o impulso */
+  var grab=null,grabClick=0;
+  device.addEventListener('pointerdown',function(e){
+    if(!ball.on||grab||!sheet.hidden){return;}
+    if(e.target.closest&&e.target.closest('#sheet,#hot,#start')){return;}
+    var r=device.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top;
+    if(Math.hypot(px-ball.x,py-ball.y)>R*1.2){return;}
+    grab={id:e.pointerId,ox:ball.x-px,oy:ball.y-py,hist:[{x:ball.x,y:ball.y,t:performance.now()}]};
+    ball.vx=0;ball.vy=0;grabClick=Date.now()+600;
+    try{device.setPointerCapture(e.pointerId);}catch(_){}
+  });
+  device.addEventListener('pointermove',function(e){
+    if(!grab||e.pointerId!==grab.id){return;}
+    var r=device.getBoundingClientRect();
+    var nx=e.clientX-r.left+grab.ox,ny=e.clientY-r.top+grab.oy;
+    nx=Math.min(W-R,Math.max(R,nx));
+    ny=Math.min(ball.open?H+R:H-R,Math.max(topLimit()+R,ny));
+    ball.a+=((nx-ball.x)+(ny-ball.y)*0.6)/R*0.9;
+    ball.x=nx;ball.y=ny;
+    var t=performance.now();
+    grab.hist.push({x:nx,y:ny,t:t});
+    while(grab.hist.length>2&&t-grab.hist[0].t>110){grab.hist.shift();}
+    grabClick=Date.now()+600;
+  });
+  function dropBall(e){
+    if(!grab||e.pointerId!==grab.id){return;}
+    var h=grab.hist,a=h[0],b=h[h.length-1],dt=(b.t-a.t)/1000;
+    var t=performance.now();
+    if(dt>0.015&&t-b.t<120){
+      ball.vx=Math.max(-2600,Math.min(2600,(b.x-a.x)/dt));
+      ball.vy=Math.max(-2600,Math.min(2600,(b.y-a.y)/dt));
+    }else{ball.vx=0;ball.vy=0;}
+    ball.fx=null;grab=null;grabClick=Date.now()+400;
+  }
+  device.addEventListener('pointerup',dropBall);
+  device.addEventListener('pointercancel',dropBall);
+
   /* Sem sensor (por exemplo no computador): arrastar o dedo inclina a bola */
   device.addEventListener('pointerdown',function(e){
-    if(e.target.closest&&e.target.closest('#sheet')){return;}
+    if(grab||(e.target.closest&&e.target.closest('#sheet'))){return;}
     dragO={x:e.clientX,y:e.clientY};dragT.x=0;dragT.y=0;dragMoved=false;sk.y=e.clientY;sk.dir=0;sk.count=0;
   });
   device.addEventListener('pointermove',function(e){
@@ -536,6 +573,7 @@ button{font-family:inherit}
   }
 
   function stepBall(dt,now){
+    if(grab){return;}
     var live=now-lastOri<600;
     if(live&&!note.hidden){note.hidden=true;}
     var ax=live?sens.x:dragT.x,ay=live?sens.y:dragT.y;
@@ -604,6 +642,7 @@ button{font-family:inherit}
     enableSensors();
     if(!sheet.hidden||Date.now()<blockTap||!device.contains(t)){return;}
     if(t.closest&&t.closest('#hot,#sheet,#start')){return;}
+    if(Date.now()<grabClick){return;}
     if(dragMoved){dragMoved=false;return;}
     ballTap(e.clientX,e.clientY);
   });
@@ -673,7 +712,7 @@ button{font-family:inherit}
     })).then(function(res){
       return caches.keys().then(function(keys){
         keys=keys.filter(function(k){return k.indexOf('bola-de-espuma-')===0;});
-        if(!keys.length){keys=['bola-de-espuma-v7'];}
+        if(!keys.length){keys=['bola-de-espuma-v8'];}
         return Promise.all(keys.map(function(k){
           return caches.open(k).then(function(c){
             return Promise.all([
