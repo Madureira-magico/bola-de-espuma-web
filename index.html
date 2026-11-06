@@ -134,6 +134,13 @@ button{font-family:inherit}
 @media (prefers-reduced-motion:reduce){
   .sheet,.panel{transition-duration:.01ms}
 }
+.vid{position:absolute;inset:0;z-index:12;background:#000;display:flex;align-items:center;justify-content:center}
+.vid video{width:100%;height:100%;object-fit:contain;background:#000}
+.area{position:absolute;inset:0;z-index:13;background:rgba(0,0,0,.4);touch-action:none}
+.area-msg{position:absolute;left:16px;right:16px;top:calc(env(safe-area-inset-top,0px) + 24px);color:#fff;font:600 16px/1.4 system-ui,sans-serif;text-align:center;text-shadow:0 1px 4px #000}
+.area-box{position:absolute;border:2px dashed #ffd54a;background:rgba(255,213,74,.25);border-radius:8px;pointer-events:none}
+.area-bar{position:absolute;left:16px;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 24px);display:flex;gap:10px}
+#video-state{min-height:1.2em;color:#c9d1e6}
 </style>
 </head>
 <body>
@@ -151,6 +158,16 @@ button{font-family:inherit}
     <div class="safe" id="safe"></div>
     <canvas class="ball" id="ball" hidden aria-hidden="true"></canvas>
     <div class="sensor-note" id="sensor-note" hidden>Sem sensor de movimento nesta tela. Arraste o dedo para inclinar a bola e balance para cima e para baixo para ela cair.</div>
+
+    <div class="vid" id="vid" hidden><video id="vplayer" playsinline webkit-playsinline preload="auto"></video></div>
+    <div class="area" id="area" hidden>
+      <div class="area-msg" id="area-msg">Arraste com o dedo para marcar a área que abre o vídeo.</div>
+      <div class="area-box" id="area-box" hidden></div>
+      <div class="area-bar">
+        <button class="btn" id="area-cancel" type="button">Cancelar</button>
+        <button class="btn main" id="area-save" type="button">Salvar área</button>
+      </div>
+    </div>
 
     <div class="sheet" id="sheet" hidden>
       <div class="panel" role="dialog" aria-label="Configurar">
@@ -195,6 +212,17 @@ button{font-family:inherit}
         <div class="fld">
           <span>Sensibilidade da chacoalhada: <b id="shake-out"></b></span>
           <input id="f-shake" type="range" min="1" max="10" step="1" value="7">
+        </div>
+
+        <div class="fld">
+          <span>Vídeo ao tocar em uma área da tela</span>
+          <input id="f-video" type="file" accept="video/*">
+          <span id="video-state"></span>
+          <div class="btns">
+            <button class="btn" id="b-area" type="button">Definir área do toque</button>
+            <button class="btn" id="b-video-test" type="button">Testar vídeo</button>
+            <button class="btn" id="b-video-clear" type="button">Remover vídeo</button>
+          </div>
         </div>
 
         <div class="fld">
@@ -542,7 +570,7 @@ button{font-family:inherit}
       var o=ptrs[id];
       if(Math.hypot(o.x-o.sx,o.y-o.sy)>60){moved++;}
     });
-    if(moved>=2){swiped=true;dragMoved=true;blockTap=Date.now()+1500;openSheet();}
+    if(moved>=2){swiped=true;dragMoved=true;blockTap=Date.now()+1500;if(!vid.hidden){closeVideo();}else{openSheet();}}
   });
   function liftPtr(e){
     delete ptrs[e.pointerId];
@@ -648,6 +676,122 @@ button{font-family:inherit}
     if(ball.on){raf=requestAnimationFrame(loop);}
   }
 
+  /* Vídeo ao tocar numa área: o vídeo fica guardado no aparelho (funciona sem internet) */
+  var vid=$('vid'),vplayer=$('vplayer'),videoBlob=null,vidUrl='',endTimer=0,areaMode=false;
+  var AREAKEY='tela-de-palco-area',area=null,tmpArea=null;
+  try{area=JSON.parse(load(AREAKEY)||'null');}catch(e){area=null;}
+  if(!area||typeof area.x!=='number'){area=null;}
+  function idb(){return new Promise(function(res,rej){
+    var r=indexedDB.open('bola-de-espuma',1);
+    r.onupgradeneeded=function(){r.result.createObjectStore('kv');};
+    r.onsuccess=function(){res(r.result);};r.onerror=function(){rej(r.error);};
+  });}
+  function idbGet(k){return idb().then(function(db){return new Promise(function(res,rej){
+    var q=db.transaction('kv').objectStore('kv').get(k);
+    q.onsuccess=function(){res(q.result);};q.onerror=function(){rej(q.error);};
+  });});}
+  function idbSet(k,v){return idb().then(function(db){return new Promise(function(res,rej){
+    var t=db.transaction('kv','readwrite');t.objectStore('kv').put(v,k);
+    t.oncomplete=function(){res();};t.onerror=function(){rej(t.error);};t.onabort=function(){rej(t.error);};
+  });});}
+  function idbDel(k){return idb().then(function(db){return new Promise(function(res,rej){
+    var t=db.transaction('kv','readwrite');t.objectStore('kv').delete(k);
+    t.oncomplete=function(){res();};t.onerror=function(){rej(t.error);};
+  });});}
+  function videoStatus(){
+    var t=videoBlob?('Vídeo guardado ('+(videoBlob.size/1048576).toFixed(1)+' MB). '):'Nenhum vídeo escolhido. ';
+    t+=area?'Área definida.':'Área ainda não definida.';
+    $('video-state').textContent=t;
+  }
+  try{idbGet('video').then(function(b){videoBlob=b||null;videoStatus();}).catch(function(){videoStatus();});}catch(e){videoStatus();}
+  function inArea(x,y){
+    if(!area){return false;}
+    var r=device.getBoundingClientRect(),fx=(x-r.left)/r.width,fy=(y-r.top)/r.height;
+    return fx>=area.x&&fx<=area.x+area.w&&fy>=area.y&&fy<=area.y+area.h;
+  }
+  function openVideo(){
+    if(!videoBlob||!vid.hidden){return false;}
+    ballStop();
+    clearTimeout(endTimer);
+    vidUrl=URL.createObjectURL(videoBlob);
+    vplayer.controls=false;
+    vplayer.src=vidUrl;
+    vid.hidden=false;
+    var p=vplayer.play();
+    if(p&&p.catch){p.catch(function(){vplayer.controls=true;});}
+    return true;
+  }
+  function closeVideo(){
+    clearTimeout(endTimer);
+    try{vplayer.pause();}catch(e){}
+    vplayer.removeAttribute('src');
+    try{vplayer.load();}catch(e){}
+    if(vidUrl){URL.revokeObjectURL(vidUrl);vidUrl='';}
+    vid.hidden=true;
+  }
+  vplayer.addEventListener('ended',function(){
+    clearTimeout(endTimer);
+    endTimer=setTimeout(closeVideo,3000);
+  });
+  $('f-video').addEventListener('change',function(){
+    var f=this.files&&this.files[0],inp=this;
+    if(!f){return;}
+    $('video-state').textContent='Guardando o vídeo…';
+    idbSet('video',f).then(function(){videoBlob=f;videoStatus();}).catch(function(){
+      $('video-state').textContent='Não consegui guardar o vídeo (pouco espaço ou arquivo muito grande).';
+    }).then(function(){inp.value='';});
+  });
+  $('b-video-clear').addEventListener('click',function(){
+    idbDel('video').then(function(){videoBlob=null;videoStatus();}).catch(function(){});
+  });
+  $('b-video-test').addEventListener('click',function(){
+    if(!videoBlob){$('video-state').textContent='Escolha um vídeo primeiro.';return;}
+    closeSheet();
+    setTimeout(openVideo,320);
+  });
+  /* Definir a área: arrastar um retângulo na tela */
+  var areaEl=$('area'),areaBox=$('area-box'),areaStart=null;
+  ['pointerdown','pointermove','pointerup','pointercancel','click','touchend'].forEach(function(ev){
+    areaEl.addEventListener(ev,function(e){e.stopPropagation();});
+  });
+  function drawBox(){
+    if(!tmpArea){areaBox.hidden=true;return;}
+    var r=device.getBoundingClientRect();
+    areaBox.hidden=false;
+    areaBox.style.left=tmpArea.x*r.width+'px';areaBox.style.top=tmpArea.y*r.height+'px';
+    areaBox.style.width=tmpArea.w*r.width+'px';areaBox.style.height=tmpArea.h*r.height+'px';
+  }
+  $('b-area').addEventListener('click',function(){
+    closeSheet();
+    areaMode=true;tmpArea=area?{x:area.x,y:area.y,w:area.w,h:area.h}:null;
+    setTimeout(function(){areaEl.hidden=false;drawBox();},320);
+  });
+  areaEl.addEventListener('pointerdown',function(e){
+    if(e.target.closest&&e.target.closest('.area-bar')){return;}
+    var r=device.getBoundingClientRect();
+    areaStart={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height,id:e.pointerId};
+    tmpArea={x:areaStart.x,y:areaStart.y,w:0,h:0};drawBox();
+    try{areaEl.setPointerCapture(e.pointerId);}catch(_){}
+  });
+  areaEl.addEventListener('pointermove',function(e){
+    if(!areaStart||e.pointerId!==areaStart.id){return;}
+    var r=device.getBoundingClientRect();
+    var cx=Math.min(1,Math.max(0,(e.clientX-r.left)/r.width)),cy=Math.min(1,Math.max(0,(e.clientY-r.top)/r.height));
+    tmpArea={x:Math.min(areaStart.x,cx),y:Math.min(areaStart.y,cy),w:Math.abs(cx-areaStart.x),h:Math.abs(cy-areaStart.y)};
+    drawBox();
+  });
+  function endArea(){areaStart=null;}
+  areaEl.addEventListener('pointerup',endArea);
+  areaEl.addEventListener('pointercancel',endArea);
+  function leaveArea(){areaEl.hidden=true;areaMode=false;areaStart=null;}
+  $('area-cancel').addEventListener('click',function(){leaveArea();openSheet();});
+  $('area-save').addEventListener('click',function(){
+    if(!tmpArea||tmpArea.w<0.02||tmpArea.h<0.02){$('area-msg').textContent='Marque uma área maior arrastando o dedo.';return;}
+    area={x:tmpArea.x,y:tmpArea.y,w:tmpArea.w,h:tmpArea.h};
+    store(AREAKEY,JSON.stringify(area));
+    leaveArea();openSheet();videoStatus();
+  });
+
   /* Toque tolerante: vale mesmo se o dedo (ou a base do polegar) rolar um pouco */
   var tapC=null,tapDone=0;
   device.addEventListener('pointerdown',function(e){
@@ -667,6 +811,8 @@ button{font-family:inherit}
     if(Object.keys(ptrs).length>1||swiped||Date.now()<blockTap||Date.now()<grabClick){return;}
     if(c.d>70||Date.now()-c.t>900){return;}
     tapDone=Date.now()+700;
+    if(!vid.hidden||areaMode){return;}
+    if(videoBlob&&inArea(c.x,c.y)){openVideo();return;}
     if(Date.now()<cooldownUntil){return;}
     ballTap(c.x,c.y);
   });
@@ -680,6 +826,8 @@ button{font-family:inherit}
     if(t.closest&&t.closest('#hot,#sheet,#start')){return;}
     if(Date.now()<grabClick||Date.now()<tapDone){return;}
     if(dragMoved){dragMoved=false;return;}
+    if(!vid.hidden||areaMode){return;}
+    if(videoBlob&&inArea(e.clientX,e.clientY)){openVideo();return;}
     if(Date.now()<cooldownUntil){return;}
     ballTap(e.clientX,e.clientY);
   });
@@ -748,7 +896,7 @@ button{font-family:inherit}
     })).then(function(res){
       return caches.keys().then(function(keys){
         keys=keys.filter(function(k){return k.indexOf('bola-de-espuma-')===0;});
-        if(!keys.length){keys=['bola-de-espuma-v10'];}
+        if(!keys.length){keys=['bola-de-espuma-v11'];}
         return Promise.all(keys.map(function(k){
           return caches.open(k).then(function(c){
             return Promise.all([
