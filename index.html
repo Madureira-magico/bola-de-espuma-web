@@ -215,13 +215,18 @@ button{font-family:inherit}
         </div>
 
         <div class="fld">
-          <span>Vídeo ao tocar em uma área da tela</span>
+          <span>Vídeo 1: abre ao tocar na área marcada da tela</span>
           <input id="f-video" type="file" accept="video/*">
+          <span>Vídeo 2: abre quando você toca durante o vídeo 1 (opcional)</span>
+          <input id="f-video2" type="file" accept="video/*">
           <span id="video-state"></span>
           <div class="btns">
-            <button class="btn" id="b-area" type="button">Definir área do toque</button>
+            <button class="btn" id="b-area" type="button">Definir área do toque (abre o vídeo 1)</button>
+            <button class="btn" id="b-area2" type="button">Definir onde tocar no vídeo 1 (pula para o vídeo 2)</button>
             <button class="btn" id="b-video-test" type="button">Testar vídeo</button>
-            <button class="btn" id="b-video-clear" type="button">Remover vídeo</button>
+            <button class="btn" id="b-video-clear" type="button">Remover vídeo 1</button>
+            <button class="btn" id="b-video2-clear" type="button">Remover vídeo 2</button>
+            <button class="btn" id="b-area2-clear" type="button">Limpar área do vídeo 2</button>
           </div>
         </div>
 
@@ -677,10 +682,12 @@ button{font-family:inherit}
   }
 
   /* Vídeo ao tocar numa área: o vídeo fica guardado no aparelho (funciona sem internet) */
-  var vid=$('vid'),vplayer=$('vplayer'),videoBlob=null,vidUrl='',endTimer=0,areaMode=false;
-  var AREAKEY='tela-de-palco-area',area=null,tmpArea=null;
+  var vid=$('vid'),vplayer=$('vplayer'),videoBlob=null,videoBlob2=null,vidWhich=1,openedAt=0,vidUrl='',endTimer=0,areaMode=false;
+  var AREAKEY='tela-de-palco-area',AREA2KEY='tela-de-palco-area2',area=null,area2=null,tmpArea=null,areaTarget=1;
   try{area=JSON.parse(load(AREAKEY)||'null');}catch(e){area=null;}
   if(!area||typeof area.x!=='number'){area=null;}
+  try{area2=JSON.parse(load(AREA2KEY)||'null');}catch(e){area2=null;}
+  if(!area2||typeof area2.x!=='number'){area2=null;}
   function idb(){return new Promise(function(res,rej){
     var r=indexedDB.open('bola-de-espuma',1);
     r.onupgradeneeded=function(){r.result.createObjectStore('kv');};
@@ -699,16 +706,19 @@ button{font-family:inherit}
     t.oncomplete=function(){res();};t.onerror=function(){rej(t.error);};
   });});}
   function videoStatus(){
-    var t=videoBlob?('Vídeo guardado ('+(videoBlob.size/1048576).toFixed(1)+' MB). '):'Nenhum vídeo escolhido. ';
-    t+=area?'Área definida.':'Área ainda não definida.';
+    var t=videoBlob?('Vídeo 1 guardado ('+(videoBlob.size/1048576).toFixed(1)+' MB). '):'Vídeo 1: nenhum. ';
+    t+=videoBlob2?('Vídeo 2 guardado ('+(videoBlob2.size/1048576).toFixed(1)+' MB). '):'Vídeo 2: nenhum. ';
+    t+=area?'Área 1 definida. ':'Área 1 ainda não definida. ';
+    t+=area2?'Área do vídeo 2 definida.':'Área do vídeo 2: qualquer lugar.';
     $('video-state').textContent=t;
   }
-  try{idbGet('video').then(function(b){videoBlob=b||null;videoStatus();}).catch(function(){videoStatus();});}catch(e){videoStatus();}
-  function inArea(x,y){
-    if(!area){return false;}
+  try{idbGet('video').then(function(b){videoBlob=b||null;return idbGet('video2');}).then(function(b){videoBlob2=b||null;videoStatus();}).catch(function(){videoStatus();});}catch(e){videoStatus();}
+  function inRect(a,x,y){
+    if(!a){return false;}
     var r=device.getBoundingClientRect(),fx=(x-r.left)/r.width,fy=(y-r.top)/r.height;
-    return fx>=area.x&&fx<=area.x+area.w&&fy>=area.y&&fy<=area.y+area.h;
+    return fx>=a.x&&fx<=a.x+a.w&&fy>=a.y&&fy<=a.y+a.h;
   }
+  function inArea(x,y){return inRect(area,x,y);}
   function openVideo(){
     if(!videoBlob||!vid.hidden){return false;}
     ballStop();
@@ -716,6 +726,7 @@ button{font-family:inherit}
     vidUrl=URL.createObjectURL(videoBlob);
     vplayer.controls=false;
     vplayer.src=vidUrl;
+    vidWhich=1;openedAt=Date.now();
     vid.hidden=false;
     var p=vplayer.play();
     if(p&&p.catch){p.catch(function(){vplayer.controls=true;});}
@@ -729,6 +740,19 @@ button{font-family:inherit}
     if(vidUrl){URL.revokeObjectURL(vidUrl);vidUrl='';}
     vid.hidden=true;
   }
+  /* Tocar durante o vídeo 1 pula na hora para o vídeo 2 */
+  vid.addEventListener('click',function(e){
+    e.stopPropagation();
+    if(vidWhich!==1||!videoBlob2||vplayer.controls||Date.now()-openedAt<700){return;}
+    if(area2&&!inRect(area2,e.clientX,e.clientY)){return;}
+    clearTimeout(endTimer);
+    if(vidUrl){URL.revokeObjectURL(vidUrl);}
+    vidUrl=URL.createObjectURL(videoBlob2);
+    vidWhich=2;
+    vplayer.src=vidUrl;
+    var p=vplayer.play();
+    if(p&&p.catch){p.catch(function(){vplayer.controls=true;});}
+  });
   vplayer.addEventListener('ended',function(){
     clearTimeout(endTimer);
     endTimer=setTimeout(closeVideo,3000);
@@ -740,6 +764,18 @@ button{font-family:inherit}
     idbSet('video',f).then(function(){videoBlob=f;videoStatus();}).catch(function(){
       $('video-state').textContent='Não consegui guardar o vídeo (pouco espaço ou arquivo muito grande).';
     }).then(function(){inp.value='';});
+  });
+  $('f-video2').addEventListener('change',function(){
+    var f=this.files&&this.files[0],inp=this;
+    if(!f){return;}
+    $('video-state').textContent='Guardando o vídeo 2…';
+    idbSet('video2',f).then(function(){videoBlob2=f;videoStatus();}).catch(function(){
+      $('video-state').textContent='Não consegui guardar o vídeo 2 (pouco espaço ou arquivo muito grande).';
+    }).then(function(){inp.value='';});
+  });
+  $('b-area2-clear').addEventListener('click',function(){area2=null;drop(AREA2KEY);videoStatus();});
+  $('b-video2-clear').addEventListener('click',function(){
+    idbDel('video2').then(function(){videoBlob2=null;videoStatus();}).catch(function(){});
   });
   $('b-video-clear').addEventListener('click',function(){
     idbDel('video').then(function(){videoBlob=null;videoStatus();}).catch(function(){});
@@ -763,7 +799,22 @@ button{font-family:inherit}
   }
   $('b-area').addEventListener('click',function(){
     closeSheet();
+    areaTarget=1;
+    $('area-msg').textContent='Arraste com o dedo para marcar a área que abre o vídeo 1.';
     areaMode=true;tmpArea=area?{x:area.x,y:area.y,w:area.w,h:area.h}:null;
+    setTimeout(function(){areaEl.hidden=false;drawBox();},320);
+  });
+  $('b-area2').addEventListener('click',function(){
+    if(!videoBlob){$('video-state').textContent='Escolha o vídeo 1 primeiro.';return;}
+    closeSheet();
+    areaTarget=2;
+    $('area-msg').textContent='Arraste com o dedo para marcar onde tocar no vídeo 1 para pular para o vídeo 2.';
+    areaMode=true;tmpArea=area2?{x:area2.x,y:area2.y,w:area2.w,h:area2.h}:null;
+    /* mostra o primeiro quadro do vídeo 1 parado, só para você acertar a posição */
+    vidUrl=URL.createObjectURL(videoBlob);
+    vplayer.controls=false;vplayer.muted=true;
+    vplayer.onloadedmetadata=function(){try{vplayer.currentTime=0.1;}catch(e){}};
+    vplayer.src=vidUrl;vidWhich=0;vid.hidden=false;
     setTimeout(function(){areaEl.hidden=false;drawBox();},320);
   });
   areaEl.addEventListener('pointerdown',function(e){
@@ -783,12 +834,15 @@ button{font-family:inherit}
   function endArea(){areaStart=null;}
   areaEl.addEventListener('pointerup',endArea);
   areaEl.addEventListener('pointercancel',endArea);
-  function leaveArea(){areaEl.hidden=true;areaMode=false;areaStart=null;}
+  function leaveArea(){
+    areaEl.hidden=true;areaMode=false;areaStart=null;
+    if(areaTarget===2){vplayer.onloadedmetadata=null;vplayer.muted=false;closeVideo();}
+  }
   $('area-cancel').addEventListener('click',function(){leaveArea();openSheet();});
   $('area-save').addEventListener('click',function(){
     if(!tmpArea||tmpArea.w<0.02||tmpArea.h<0.02){$('area-msg').textContent='Marque uma área maior arrastando o dedo.';return;}
-    area={x:tmpArea.x,y:tmpArea.y,w:tmpArea.w,h:tmpArea.h};
-    store(AREAKEY,JSON.stringify(area));
+    var na={x:tmpArea.x,y:tmpArea.y,w:tmpArea.w,h:tmpArea.h};
+    if(areaTarget===2){area2=na;store(AREA2KEY,JSON.stringify(na));}else{area=na;store(AREAKEY,JSON.stringify(na));}
     leaveArea();openSheet();videoStatus();
   });
 
@@ -896,7 +950,7 @@ button{font-family:inherit}
     })).then(function(res){
       return caches.keys().then(function(keys){
         keys=keys.filter(function(k){return k.indexOf('bola-de-espuma-')===0;});
-        if(!keys.length){keys=['bola-de-espuma-v11'];}
+        if(!keys.length){keys=['bola-de-espuma-v13'];}
         return Promise.all(keys.map(function(k){
           return caches.open(k).then(function(c){
             return Promise.all([
